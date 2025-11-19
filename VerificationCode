@@ -4,7 +4,6 @@ using System.Drawing;
 using System.Linq;
 using System.Net;
 using System.Net.Mail;
-using System.Security.Policy;
 using System.Windows.Forms;
 
 namespace Front
@@ -18,7 +17,7 @@ namespace Front
         private Timer resendTimer;
         private int remainingTime = 30;
         private static readonly Random rng = new Random();
-
+        private bool isPasswordReset = false;
         public Verification_Code(string username, string code, string hash)
         {
             InitializeComponent();
@@ -26,6 +25,7 @@ namespace Front
             userName = username;
             verificationCode = code;
             passwordHash = hash;
+            isPasswordReset = true;
 
             lblReSend.Cursor = Cursors.Hand;
             lblReSend.Text = "Resend now";
@@ -36,7 +36,6 @@ namespace Front
             resendTimer.Interval = 1000;
             resendTimer.Tick += resendTimer_Tick;
 
-
             userEmail = GetUserEmail(userName);
         }
 
@@ -44,6 +43,7 @@ namespace Front
         {
             InitializeComponent();
         }
+
         private void btnCode_Click(object sender, EventArgs e)
         {
             string enteredCode = txtEnterCode.Text.Trim();
@@ -57,30 +57,67 @@ namespace Front
             using (SqlConnection conn = new SqlConnection(connectionString))
             {
                 conn.Open();
-                string checkQuery = "SELECT verificationCode FROM Staff WHERE userName = @userName";
-                string currentCode = " ";
+                string checkQuery = "SELECT verificationCode, verificationSetAt FROM Staff WHERE userName = @userName";
+                string currentCode = "";
+                DateTime? verificationSetAt = null;
+
                 using (SqlCommand checkCmd = new SqlCommand(checkQuery, conn))
                 {
                     checkCmd.Parameters.AddWithValue("@userName", userName);
-                    var result = checkCmd.ExecuteScalar();
-                    if (result == null)
+                    using (SqlDataReader reader = checkCmd.ExecuteReader())
                     {
-                        MessageBox.Show("User not found.", " ", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        if (reader.Read())
+                        {
+                            currentCode = reader["verificationCode"] != DBNull.Value ? reader["verificationCode"].ToString() : "";
+                            verificationSetAt = reader["verificationSetAt"] != DBNull.Value ? (DateTime?)reader["verificationSetAt"] : null;
+                        }
+                        else
+                        {
+                            MessageBox.Show("User not found.", " ", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            return;
+                        }
+                    }
+                }
+                if (verificationSetAt.HasValue && isPasswordReset)
+                {
+                    TimeSpan elapsed = DateTime.UtcNow - verificationSetAt.Value;
+                    if (elapsed.TotalMinutes > 5)
+                    {
+                        MessageBox.Show("Verification code has expired. Please request a new one.", " ", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                         return;
                     }
-                    currentCode = result.ToString();
                 }
+
                 if (!enteredCode.Equals(currentCode, StringComparison.OrdinalIgnoreCase))
                 {
                     MessageBox.Show("Incorrect verification code.", " ", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
-                string updateQuery = @"UPDATE Staff SET isVerified = 1 WHERE userName = @userName";
+                string updateQuery = "";
+                if (isPasswordReset)
+                {
+                    updateQuery = @"UPDATE Staff 
+                                   SET passwordHash = @passwordHash, 
+                                       isVerified = 1,
+                                       verificationCode = NULL,
+                                       verificationSetAt = NULL
+                                   WHERE userName = @userName";
+                }
+                else
+                {
+                    updateQuery = @"UPDATE Staff SET isVerified = 1 WHERE userName = @userName";
+                }
+
                 using (SqlCommand updateCmd = new SqlCommand(updateQuery, conn))
                 {
+                    if (isPasswordReset)
+                    {
+                        updateCmd.Parameters.AddWithValue("@passwordHash", passwordHash);
+                    }
                     updateCmd.Parameters.AddWithValue("@userName", userName);
                     updateCmd.ExecuteNonQuery();
                 }
+
                 string verifyCheck = "SELECT isVerified FROM Staff WHERE userName = @userName";
                 using (SqlCommand verifyCmd = new SqlCommand(verifyCheck, conn))
                 {
@@ -89,9 +126,18 @@ namespace Front
 
                     if (verified)
                     {
-                        MessageBox.Show("Email verified successfully!", " ", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                        Home homeForm = new Home();
-                        homeForm.Show();
+                        if (isPasswordReset)
+                        {
+                            MessageBox.Show("Password has been reset successfully! Please login with your new password.", " ", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            Log_In loginForm = new Log_In();
+                            loginForm.Show();
+                        }
+                        else
+                        {
+                            MessageBox.Show("Email verified successfully!", " ", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            Home homeForm = new Home();
+                            homeForm.Show();
+                        }
                         this.Close();
                     }
                     else
@@ -154,12 +200,21 @@ namespace Front
         private void SendVerificationEmail(string toEmail, string code)
         {
             string fromEmail = "wendellzx04@gmail.com";
-            string password = "lewg fjgg janz lemm"; 
+            string password = "lewg fjgg janz lemm";
 
             using (MailMessage mail = new MailMessage(fromEmail, toEmail))
             {
-                mail.Subject = "Your new Verification Code";
-                mail.Body = $"Your new verification code is: {code}";
+                if (isPasswordReset)
+                {
+                    mail.Subject = "Password Reset Verification Code";
+                    mail.Body = $"Your password reset verification code is: {code}\n\nThis code will expire in 5 minutes.\n\nIf you did not request a password reset, please ignore this email.";
+                }
+                else
+                {
+                    mail.Subject = "Your new Verification Code";
+                    mail.Body = $"Your new verification code is: {code}";
+                }
+
                 using (SmtpClient smtp = new SmtpClient("smtp.gmail.com", 587))
                 {
                     smtp.Credentials = new NetworkCredential(fromEmail, password);
