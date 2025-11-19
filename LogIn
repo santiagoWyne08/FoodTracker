@@ -18,22 +18,31 @@ namespace Front
             InitializeComponent();
             lblSignUp.Cursor = Cursors.Hand;
             lblForgotPassword.Cursor = Cursors.Hand;
+            lblTerms.Cursor = Cursors.Hand; 
 
             lblSignUp.Click += lblSignUp_Click;
             lblForgotPassword.Click += lblForgotPassword_Click;
+            lblTerms.Click += lblTermsConditions_Click; 
             txtboxPassword.PasswordChar = '*';
         }
+
         private void lblSignUp_Click(object sender, EventArgs e)
         {
             Sign_Up su = new Sign_Up();
             su.Show();
             this.Hide();
         }
+
         private void lblForgotPassword_Click(object sender, EventArgs e)
         {
-            Set_New_Password snp = new Set_New_Password();
-            snp.Show();
+            ForgotPassword fp = new ForgotPassword();
+            fp.Show();
             this.Hide();
+        }
+        private void lblTermsConditions_Click(object sender, EventArgs e)
+        {
+            Terms_and_Conditions tc = new Terms_and_Conditions();
+
         }
         private void btnLogIn_Click(object sender, EventArgs e)
         {
@@ -43,18 +52,19 @@ namespace Front
             if (string.IsNullOrWhiteSpace(userInput) || string.IsNullOrWhiteSpace(passWord))
             {
                 MessageBox.Show("Please enter both the username and password", "Warning", MessageBoxButtons.OK, MessageBoxIcon.None);
-                return;            
+                return;
             }
+
             string connectionString = @"Data Source=WYNE;Initial Catalog=foodMonitoringDB;Integrated Security=True";
             using (SqlConnection conn = new SqlConnection(connectionString))
             {
                 try
                 {
                     conn.Open();
-                    string query = "SELECT staffID, Password, isVerified FROM Staff WHERE userName = @userInput or Email = @userInput";
+                    string query = "SELECT StaffID, Password, isVerified FROM Staff WHERE Username = @userInput OR Email = @userInput";
                     SqlCommand command = new SqlCommand(query, conn);
                     command.Parameters.AddWithValue("@userInput", userInput);
-                    
+
                     using (SqlDataReader reader = command.ExecuteReader())
                     {
                         if (reader.Read())
@@ -66,13 +76,10 @@ namespace Front
                                 dbPassword = Encoding.UTF8.GetString((byte[])dbPasswordObj);
                             else
                                 dbPassword = dbPasswordObj.ToString();
-                            bool isVerified = Convert.ToBoolean(reader["isVerified"].ToString());
-                            string staffID = reader["staffID"].ToString();
-                            if (!Convert.ToBoolean(reader["isVerified"]))
-                            {
-                                MessageBox.Show("Please verify your email before logging in.", " ", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                                return;
-                            }
+
+                            bool isVerified = Convert.ToBoolean(reader["isVerified"]);
+                            string staffID = reader["StaffID"].ToString(); 
+
                             if (!isVerified)
                             {
                                 MessageBox.Show("Please verify your email before logging in.", "Notice", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -80,10 +87,21 @@ namespace Front
                                 conn.Close();
                                 return;
                             }
+
                             if (BCrypt.Net.BCrypt.Verify(passWord, dbPassword))
                             {
+                                reader.Close();
+
+                                string updateLoginQuery = "UPDATE Staff SET LastLogin = @LastLogin WHERE StaffID = @StaffID";
+                                using (SqlCommand updateCmd = new SqlCommand(updateLoginQuery, conn))
+                                {
+                                    updateCmd.Parameters.AddWithValue("@LastLogin", DateTime.Now);
+                                    updateCmd.Parameters.AddWithValue("@StaffID", staffID);
+                                    updateCmd.ExecuteNonQuery();
+                                }
+
                                 MessageBox.Show("Login successful!", " ", MessageBoxButtons.OK, MessageBoxIcon.None);
-                                
+
                                 SessionData.StaffID = staffID;
 
                                 Home h = new Home();
@@ -108,6 +126,7 @@ namespace Front
                 }
             }
         }
+
         private void btnBack_Click(object sender, EventArgs e)
         {
             Front fr = new Front();
